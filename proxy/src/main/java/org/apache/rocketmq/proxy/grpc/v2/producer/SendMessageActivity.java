@@ -52,6 +52,8 @@ import org.apache.rocketmq.proxy.grpc.v2.common.GrpcConverter;
 import org.apache.rocketmq.proxy.grpc.v2.common.GrpcProxyException;
 import org.apache.rocketmq.proxy.grpc.v2.common.GrpcValidator;
 import org.apache.rocketmq.proxy.grpc.v2.common.ResponseBuilder;
+import org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant;
+import org.apache.rocketmq.proxy.metrics.ProxyMetricsManager;
 import org.apache.rocketmq.proxy.processor.MessagingProcessor;
 import org.apache.rocketmq.proxy.processor.QueueSelector;
 import org.apache.rocketmq.proxy.service.route.AddressableMessageQueue;
@@ -76,14 +78,16 @@ public class SendMessageActivity extends AbstractMessingActivity {
             apache.rocketmq.v2.Message message = messageList.get(0);
             Resource topic = message.getTopic();
             validateTopic(topic);
-
+            List<Message> buildMessageList = buildMessage(ctx, request.getMessagesList(), topic);
             future = this.messagingProcessor.sendMessage(
                 ctx,
                 new SendMessageQueueSelector(request),
                 GrpcConverter.getInstance().wrapResourceWithNamespace(topic),
                 buildSysFlag(message),
-                buildMessage(ctx, request.getMessagesList(), topic)
+                buildMessageList
             ).thenApply(result -> convertToSendMessageResponse(ctx, request, result));
+
+            recordMetrics(topic.getName(), request.getMessagesCount(), buildMessageList);
         } catch (Throwable t) {
             future.completeExceptionally(t);
         }
@@ -102,6 +106,17 @@ public class SendMessageActivity extends AbstractMessingActivity {
             messageExtList.add(buildMessage(context, protoMessage, topicName));
         }
         return messageExtList;
+    }
+
+    protected void recordMetrics(String topic, long messageCount, List<Message> messageList ){
+        long totalMessageSize = calcMessageSize(messageList);
+        long messageSize = totalMessageSize/messageCount;
+        ProxyMetricsManager.recordMessagesInTotal(topic, ProxyMetricsConstant.PROTOCOL_GRPC, messageCount);
+        ProxyMetricsManager.recordThroughputInTotal(topic, ProxyMetricsConstant.PROTOCOL_GRPC, totalMessageSize);
+        ProxyMetricsManager.recordMessageSize(topic, ProxyMetricsConstant.PROTOCOL_GRPC, messageSize);
+    }
+    protected  int calcMessageSize(List<Message> messageList){
+        return messageList.stream().mapToInt(message -> message.getBody().length).sum();
     }
 
     protected Message buildMessage(ProxyContext context, apache.rocketmq.v2.Message protoMessage, String producerGroup) {

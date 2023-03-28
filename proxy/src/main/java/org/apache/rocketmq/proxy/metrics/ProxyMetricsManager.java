@@ -19,6 +19,8 @@ package org.apache.rocketmq.proxy.metrics;
 import com.google.common.base.Splitter;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.common.AttributesBuilder;
+import io.opentelemetry.api.metrics.LongCounter;
+import io.opentelemetry.api.metrics.LongHistogram;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.metrics.ObservableLongGauge;
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
@@ -48,6 +50,7 @@ import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.slf4j.bridge.SLF4JBridgeHandler;
 
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.AGGREGATION_DELTA;
+import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_TOPIC;
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_AGGREGATION;
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_CLUSTER_NAME;
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_NODE_ID;
@@ -56,6 +59,18 @@ import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.OPEN_TELE
 import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.GAUGE_PROXY_UP;
 import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.LABEL_PROXY_MODE;
 import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.NODE_TYPE_PROXY;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_MESSAGES_IN_TOTAL;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_MESSAGES_OUT_TOTAL;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_THROUGHPUT_IN_TOTAL;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_THROUGHPUT_OUT_TOTAL;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.HISTOGRAM_ROCKETMQ_MESSAGE_SIZE;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.HISTOGRAM_RPC_LATENCY;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_CONSUMER_CONNECTIONS;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.COUNTER_ROCKETMQ_PRODUCER_CONNECTIONS;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.GAUGE_ROCKETMQ_PROCESSOR_WATERMARK;
+import static org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant.LABEL_PROTOCOL;
+import static org.apache.rocketmq.remoting.metrics.RemotingMetricsConstant.LABEL_REQUEST_CODE;
+import static org.apache.rocketmq.remoting.metrics.RemotingMetricsConstant.LABEL_RESPONSE_CODE;
 
 public class ProxyMetricsManager implements StartAndShutdown {
     private final static Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
@@ -70,6 +85,18 @@ public class ProxyMetricsManager implements StartAndShutdown {
     private LoggingMetricExporter loggingMetricExporter;
 
     public static ObservableLongGauge proxyUp = null;
+    public static LongCounter messagesInTotal = null;
+    public static LongCounter messagesOutTotal = null;
+    public static LongCounter throughputInTotal = null;
+    public static LongCounter throughputOutTotal = null;
+    public static LongHistogram messageSizeTotal = null;
+    public static LongHistogram rpcLatencyTotal = null;
+    public static LongCounter producerConnectionsTotal = null;
+    public static LongCounter consumerConnectionsTotal = null;
+    public static ObservableLongGauge processorWatermark = null;
+
+
+    public static LongHistogram rpcL = null;
 
     public static void initLocalMode(BrokerMetricsManager brokerMetricsManager, ProxyConfig proxyConfig) {
         if (proxyConfig.getMetricsExporterType() == BrokerConfig.MetricsExporterType.DISABLE) {
@@ -104,9 +131,98 @@ public class ProxyMetricsManager implements StartAndShutdown {
         ProxyMetricsManager.attributesBuilderSupplier = attributesBuilderSupplier;
 
         proxyUp = meter.gaugeBuilder(GAUGE_PROXY_UP)
-            .setDescription("proxy status")
-            .ofLongs()
-            .buildWithCallback(measurement -> measurement.record(1, newAttributesBuilder().build()));
+                .setDescription("proxy status")
+                .ofLongs()
+                .buildWithCallback(measurement -> measurement.record(1, newAttributesBuilder().build()));
+
+        messagesInTotal = meter.counterBuilder(COUNTER_ROCKETMQ_MESSAGES_IN_TOTAL)
+                .setDescription("The number of messages that are produced.")
+                .build();
+
+        messagesOutTotal = meter.counterBuilder(COUNTER_ROCKETMQ_MESSAGES_OUT_TOTAL)
+                .setDescription("The number of messages that are consumed.")
+                .build();
+
+        throughputInTotal = meter.counterBuilder(COUNTER_ROCKETMQ_THROUGHPUT_IN_TOTAL)
+                .setDescription("The write throughput that are produced.")
+                .build();
+
+        throughputOutTotal = meter.counterBuilder(COUNTER_ROCKETMQ_THROUGHPUT_OUT_TOTAL)
+                .setDescription("The read throughput that are produced.")
+                .build();
+
+        messageSizeTotal = meter.histogramBuilder(HISTOGRAM_ROCKETMQ_MESSAGE_SIZE)
+                .setDescription("The distribution of message sizes.")
+                .setUnit("bytes")
+                .ofLongs()
+                .build();
+
+        rpcLatencyTotal = meter.histogramBuilder(HISTOGRAM_RPC_LATENCY)
+                .setDescription("The rpc call latency. ")
+                .setUnit("ms")
+                .ofLongs()
+                .build();
+
+        producerConnectionsTotal = meter.counterBuilder(COUNTER_ROCKETMQ_PRODUCER_CONNECTIONS)
+                .setDescription("The number of connections for the producer")
+                .build();
+
+        consumerConnectionsTotal = meter.counterBuilder(COUNTER_ROCKETMQ_CONSUMER_CONNECTIONS)
+                .setDescription("The number of connections for the consumer")
+                .build();
+
+        processorWatermark = meter.gaugeBuilder(GAUGE_ROCKETMQ_PROCESSOR_WATERMARK)
+                .setDescription("High watermark information for the thread")
+                .ofLongs()
+                .buildWithCallback(measurement -> measurement.record(1, newAttributesBuilder().build()));
+    }
+
+    public static void recordMessagesInTotal(String topic, String protocol, Long messageCount) {
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_TOPIC, topic)
+                .put(LABEL_PROTOCOL, protocol)
+                .build();
+        messagesInTotal.add(messageCount, attributes);
+    }
+
+    public static void recordThroughputInTotal(String topic, String protocol, Long messageSize) {
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_TOPIC, topic)
+                .put(LABEL_PROTOCOL, protocol)
+                .build();
+        throughputInTotal.add(messageSize, attributes);
+    }
+
+    public static void recordMessagesOutTotal(String topic, String protocol, Long messageCount) {
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_TOPIC, topic)
+                .put(LABEL_PROTOCOL, protocol)
+                .build();
+        messagesOutTotal.add(messageCount, attributes);
+    }
+
+    public static void recordThroughputOutTotal(String topic, String protocol, Long messageSize) {
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_TOPIC, topic)
+                .put(LABEL_PROTOCOL, protocol)
+                .build();
+        throughputOutTotal.add(messageSize, attributes);
+    }
+
+    public static void recordMessageSize(String topic, String protocol, Long messageSize) {
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_TOPIC, topic)
+                .put(LABEL_PROTOCOL, protocol)
+                .build();
+        messageSizeTotal.record(messageSize, attributes);
+    }
+
+    public static void recordRpcLatencyTotal(String requestCode, String responseCode, Long costTime){
+        Attributes attributes = newAttributesBuilder()
+                .put(LABEL_REQUEST_CODE, requestCode)
+                .put(LABEL_RESPONSE_CODE, responseCode)
+                .build();
+        rpcLatencyTotal.record(costTime, attributes);
     }
 
     public ProxyMetricsManager() {

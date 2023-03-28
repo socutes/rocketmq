@@ -38,6 +38,8 @@ import org.apache.rocketmq.proxy.grpc.v2.AbstractMessingActivity;
 import org.apache.rocketmq.proxy.grpc.v2.channel.GrpcChannelManager;
 import org.apache.rocketmq.proxy.grpc.v2.common.GrpcClientSettingsManager;
 import org.apache.rocketmq.proxy.grpc.v2.common.GrpcConverter;
+import org.apache.rocketmq.proxy.metrics.ProxyMetricsConstant;
+import org.apache.rocketmq.proxy.metrics.ProxyMetricsManager;
 import org.apache.rocketmq.proxy.processor.MessagingProcessor;
 import org.apache.rocketmq.proxy.processor.QueueSelector;
 import org.apache.rocketmq.proxy.processor.ReceiptHandleProcessor;
@@ -149,6 +151,8 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                             }
                         }
                     }
+                    ProxyMetricsManager.recordMessagesOutTotal(topic, ProxyMetricsConstant.PROTOCOL_GRPC, popResult.getRestNum());
+                    ProxyMetricsManager.recordThroughputOutTotal(topic, ProxyMetricsConstant.PROTOCOL_GRPC, (long)calcMessageSize(popResult.getMsgFoundList()));
                     writer.writeAndComplete(ctx, request, popResult);
                 })
                 .exceptionally(t -> {
@@ -194,5 +198,9 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                 return null;
             }
         }
+    }
+
+    protected  int calcMessageSize(List<MessageExt> messageList){
+        return messageList.stream().mapToInt(message -> message.getBody().length).sum();
     }
 }
