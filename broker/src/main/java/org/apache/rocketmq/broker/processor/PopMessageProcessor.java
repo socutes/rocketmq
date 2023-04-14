@@ -278,19 +278,26 @@ public class PopMessageProcessor implements NettyRequestProcessor {
 
         if (requestHeader.isTimeoutTooMuch()) {
             response.setCode(ResponseCode.POLLING_TIMEOUT);
-            response.setRemark(String.format("the broker[%s] poping message is timeout too much",
+            response.setRemark(String.format("the broker[%s] pop message is timeout too much",
                 this.brokerController.getBrokerConfig().getBrokerIP1()));
             return response;
         }
         if (!PermName.isReadable(this.brokerController.getBrokerConfig().getBrokerPermission())) {
             response.setCode(ResponseCode.NO_PERMISSION);
-            response.setRemark(String.format("the broker[%s] poping message is forbidden",
+            response.setRemark(String.format("the broker[%s] pop message is forbidden",
                 this.brokerController.getBrokerConfig().getBrokerIP1()));
             return response;
         }
         if (requestHeader.getMaxMsgNums() > 32) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
-            response.setRemark(String.format("the broker[%s] poping message's num is greater than 32",
+            response.setRemark(String.format("the broker[%s] pop message's num is greater than 32",
+                this.brokerController.getBrokerConfig().getBrokerIP1()));
+            return response;
+        }
+
+        if (!brokerController.getMessageStore().getMessageStoreConfig().isTimerWheelEnable()) {
+            response.setCode(ResponseCode.SYSTEM_ERROR);
+            response.setRemark(String.format("the broker[%s] pop message is forbidden because timerWheelEnable is false",
                 this.brokerController.getBrokerConfig().getBrokerIP1()));
             return response;
         }
@@ -490,8 +497,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                                 .addListener((ChannelFutureListener) future -> {
                                     tmpGetMessageResult.release();
                                     Attributes attributes = RemotingMetricsManager.newAttributesBuilder()
-                                        .put(LABEL_REQUEST_CODE, RemotingMetricsManager.getRequestCodeDesc(request.getCode()))
-                                        .put(LABEL_RESPONSE_CODE, RemotingMetricsManager.getResponseCodeDesc(finalResponse.getCode()))
+                                        .put(LABEL_REQUEST_CODE, RemotingHelper.getRequestCodeDesc(request.getCode()))
+                                        .put(LABEL_RESPONSE_CODE, RemotingHelper.getResponseCodeDesc(finalResponse.getCode()))
                                         .put(LABEL_RESULT, RemotingMetricsManager.getWriteAndFlushResult(future))
                                         .build();
                                     RemotingMetricsManager.rpcLatency.record(request.getProcessTimer().elapsed(TimeUnit.MILLISECONDS), attributes);
