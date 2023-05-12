@@ -111,6 +111,7 @@ import org.apache.rocketmq.remoting.protocol.body.QueryCorrectionOffsetBody;
 import org.apache.rocketmq.remoting.protocol.body.QuerySubscriptionResponseBody;
 import org.apache.rocketmq.remoting.protocol.body.QueueTimeSpan;
 import org.apache.rocketmq.remoting.protocol.body.ResetOffsetBody;
+import org.apache.rocketmq.remoting.protocol.body.SyncStateSet;
 import org.apache.rocketmq.remoting.protocol.body.TopicConfigAndMappingSerializeWrapper;
 import org.apache.rocketmq.remoting.protocol.body.TopicList;
 import org.apache.rocketmq.remoting.protocol.body.UnlockBatchRequestBody;
@@ -558,14 +559,14 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
                 response.setRemark(null);
                 NettyRemotingAbstract.writeResponse(ctx.channel(), request, response);
             } else {
-                String errorMsg = "The accesskey[" + requestHeader.getAccessKey() + "] corresponding to accessConfig has been updated failed.";
+                String errorMsg = "The accessKey[" + requestHeader.getAccessKey() + "] corresponding to accessConfig has been updated failed.";
                 LOGGER.warn(errorMsg);
                 response.setCode(ResponseCode.UPDATE_AND_CREATE_ACL_CONFIG_FAILED);
                 response.setRemark(errorMsg);
                 return response;
             }
         } catch (Exception e) {
-            LOGGER.error("Failed to generate a proper update accessvalidator response", e);
+            LOGGER.error("Failed to generate a proper update accessValidator response", e);
             response.setCode(ResponseCode.UPDATE_AND_CREATE_ACL_CONFIG_FAILED);
             response.setRemark(e.getMessage());
             return response;
@@ -592,7 +593,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
                 response.setRemark(null);
                 NettyRemotingAbstract.writeResponse(ctx.channel(), request, response);
             } else {
-                String errorMsg = "The accesskey[" + requestHeader.getAccessKey() + "] corresponding to accessConfig has been deleted failed.";
+                String errorMsg = "The accessKey[" + requestHeader.getAccessKey() + "] corresponding to accessConfig has been deleted failed.";
                 LOGGER.warn(errorMsg);
                 response.setCode(ResponseCode.DELETE_ACL_CONFIG_FAILED);
                 response.setRemark(errorMsg);
@@ -600,7 +601,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
             }
 
         } catch (Exception e) {
-            LOGGER.error("Failed to generate a proper delete accessvalidator response", e);
+            LOGGER.error("Failed to generate a proper delete accessValidator response", e);
             response.setCode(ResponseCode.DELETE_ACL_CONFIG_FAILED);
             response.setRemark(e.getMessage());
             return response;
@@ -774,12 +775,21 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
                 String bodyStr = new String(body, MixAll.DEFAULT_CHARSET);
                 Properties properties = MixAll.string2Properties(bodyStr);
                 if (properties != null) {
-                    LOGGER.info("updateBrokerConfig, new config: [{}] client: {} ", properties, ctx.channel().remoteAddress());
+                    LOGGER.info("updateBrokerConfig, new config: [{}] client: {} ", properties, callerAddress);
+
+                    if (properties.containsKey("brokerConfigPath")) {
+                        response.setCode(ResponseCode.NO_PERMISSION);
+                        response.setRemark("Can not update config path");
+                        return response;
+                    }
+
                     this.brokerController.getConfiguration().update(properties);
                     if (properties.containsKey("brokerPermission")) {
-                        this.brokerController.getTopicConfigManager().getDataVersion().nextVersion();
+                        long stateMachineVersion = brokerController.getMessageStore() != null ? brokerController.getMessageStore().getStateMachineVersion() : 0;
+                        this.brokerController.getTopicConfigManager().getDataVersion().nextVersion(stateMachineVersion);
                         this.brokerController.registerBrokerAll(false, false, true);
                     }
+
                 } else {
                     LOGGER.error("string2Properties error");
                     response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -2627,6 +2637,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
     private RemotingCommand notifyBrokerRoleChanged(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         NotifyBrokerRoleChangedRequestHeader requestHeader = (NotifyBrokerRoleChangedRequestHeader) request.decodeCommandCustomHeader(NotifyBrokerRoleChangedRequestHeader.class);
+        SyncStateSet syncStateSetInfo = RemotingSerializable.decode(request.getBody(), SyncStateSet.class);
 
         RemotingCommand response = RemotingCommand.createResponseCommand(null);
 
@@ -2634,7 +2645,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
 
         final ReplicasManager replicasManager = this.brokerController.getReplicasManager();
         if (replicasManager != null) {
-            replicasManager.changeBrokerRole(requestHeader.getMasterAddress(), requestHeader.getMasterEpoch(), requestHeader.getSyncStateSetEpoch(), requestHeader.getBrokerId());
+            replicasManager.changeBrokerRole(requestHeader.getMasterBrokerId(), requestHeader.getMasterAddress(), requestHeader.getMasterEpoch(), requestHeader.getSyncStateSetEpoch(), syncStateSetInfo.getSyncStateSet());
         }
         response.setCode(ResponseCode.SUCCESS);
         response.setRemark(null);
