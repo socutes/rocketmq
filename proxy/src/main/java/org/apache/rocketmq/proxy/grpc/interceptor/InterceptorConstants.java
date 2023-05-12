@@ -22,6 +22,7 @@ import io.grpc.Metadata;
 
 public class InterceptorConstants {
     public static final Context.Key<Metadata> METADATA = Context.key("rpc-metadata");
+    public static final Context.Key<Metadata> STARTTIME = Context.key("rpc-start-time");
 
     /**
      * Remote address key in attributes of call

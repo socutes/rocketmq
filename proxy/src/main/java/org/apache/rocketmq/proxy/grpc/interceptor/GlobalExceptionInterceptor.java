@@ -28,6 +28,7 @@ import io.grpc.StatusRuntimeException;
 import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.org.slf4j.Logger;
 import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
+import org.apache.rocketmq.proxy.metrics.ProxyMetricsManager;
 
 public class GlobalExceptionInterceptor implements ServerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
@@ -41,12 +42,15 @@ public class GlobalExceptionInterceptor implements ServerInterceptor {
         final ServerCall<R, W> serverCall = new ClosableServerCall<>(call);
         ServerCall.Listener<R> delegate = next.startCall(serverCall, headers);
         return new ForwardingServerCallListener.SimpleForwardingServerCallListener<R>(delegate) {
+            private Long startTimeNanos = 0L;
             @Override
             public void onMessage(R message) {
                 try {
                     super.onMessage(message);
                 } catch (Throwable e) {
                     closeWithException(e);
+                }finally {
+                    startTimeNanos = System.nanoTime();
                 }
             }
 
@@ -74,6 +78,8 @@ public class GlobalExceptionInterceptor implements ServerInterceptor {
                     super.onComplete();
                 } catch (Throwable e) {
                     closeWithException(e);
+                }finally {
+
                 }
             }
 
